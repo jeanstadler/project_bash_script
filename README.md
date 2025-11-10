@@ -47,3 +47,4 @@ Le PATH est une variable d'environnement contenant une liste de chemins où le s
 
 Soit le programme n'existe pas sur votre système
 Soit le programme existe mais son chemin n'est pas dans le PATH
+# project_bash_script

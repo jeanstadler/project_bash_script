@@ -1,43 +1,129 @@
+#!/usr/bin/env bash
+
+# couleurs pour le terminal
+GREEN=$(printf '\033[0;32m')
+BLUE_UNDERLINE=$(printf '\033[0;34;4m')
+RESET=$(printf '\033[0m')
+
+# verification des arguments
+if [ "$#" -ne 3 ]; then
+  echo "usage : $0 <fichier_urls> <dossier_downloads> <dossier_archives>"
+  exit 1
+fi
+
+# variables
+URLS_FILE=$1
+DOWNLOAD_DIR=$2
+ARCHIVE_DIR=$3
+TEMP_DIR="archive_tmp"
+HISTORY_FILE="execution_history.log"
+
+# verification que le fichier d'URLs existe
+if [ ! -f "$URLS_FILE" ]; then
+  echo "le fichier '$URLS_FILE' est introuvable."
+  exit 1
+fi
+
+# affichage de l'heure de début
+start_timestamp=$(date '+%Y-%m-%dT%H:%M:%S.%3N%z')
+
 echo ""
 echo "==========================================================="
-echo "Bash script starting at $(date '+%Y-%m-%dT%H:%M:%S.%3N%z')"
-echo "Script full path: '$(realpath "$0")'"
+echo "> bash script starting at: $start_timestamp"
+echo "> script full path: '$(realpath "$0")'"
 
-# supprimer le dossier s'il existe déjà
-rm -rf archive_tmp
+# preparation du dossier temporaire
+rm -rf "$TEMP_DIR"
+mkdir -p "$TEMP_DIR"
 
-# puis créer le dossier temporaire de travail
-mkdir archive_tmp
+# telechargement des fichiers JSON
+# on lit le fichier d'URLs ligne par ligne et on telecharge chaque ficher
+url_count=0
 
+while IFS= read -r url; do
+  # nettoyage des caractères Windows (\r)
+  url=${url%$'\r'}
 
-# awk permet de traiter les fichiers text ligne par ligne
-# nr==1 veut dire ligne numéro 1 
-# nr==2 veut dire ligne numéro 2
-first_url=$(awk 'NR==1' "$1")
-second_url=$(awk 'NR==2' "$1")
-third_url=$(awk 'NR==3' "$1")
-echo ""
-echo "--1/3--"
-echo "downloading first $first_url"
-# curl permet de faire des requettes HTTP
-# -o est une option qui permet de dire où enregistrer le fichier téléchargé
-curl "$first_url" -o "archive_tmp/de.json"
+  # ignorer les lignes vides
+  if [ -z "$url" ]; then
+    continue
+  fi
 
+  url_count=$((url_count + 1))
+  # extrait juste le nom du fichier
+  file_name=$(basename "$url")
+  json_path="$TEMP_DIR/$file_name"
+  headers_path="$json_path.headers"
 
+  printf "> downloading '%s%s%s'…\n" "$BLUE_UNDERLINE" "$url" "$RESET"
+  # curl -D sauvegarde les en-tetes, -o sauvegarde le contenu
+  curl "$url" -D "$headers_path" -o "$json_path"
+  printf "  %sdone%s\n" "$GREEN" "$RESET"
 
+# lecture depuis le fichier d'URLs
+done < "$URLS_FILE"
 
+if [ "$url_count" -eq 0 ]; then
+  echo "aucune URL dans '$URLS_FILE'."
+  exit 1
+fi
 
-echo "----"
-echo ""
-echo "--2/3--"
-echo "downloadin second url $second_url"
-curl "$second_url" -o "archive_tmp/fr.json"
-echo "----"
-echo ""
-echo "--3/3--"
-echo "downloading third url $third_url"
-curl "$third_url" -o "archive_tmp/es.json"
-echo "----"
-echo ""
-echo "Bash script end at $(date '+%Y-%m-%dT%H:%M:%S.%3N%z')"
+# copie des fichiers JSON vers le dossier downloads
+# on recree le dossier downloads et on y copie tous les fichiers .json
+echo "> copying JSON files from '$TEMP_DIR' to '$DOWNLOAD_DIR'…"
+rm -rf "$DOWNLOAD_DIR"
+mkdir -p "$DOWNLOAD_DIR"
+
+for json_file in "$TEMP_DIR"/*.json; do
+  # verifie que le fichier existe avant de copier
+  if [ ! -e "$json_file" ]; then
+    continue
+  fi
+  cp "$json_file" "$DOWNLOAD_DIR/"
+done
+
+printf "  %sdone%s\n" "$GREEN" "$RESET"
+
+# compilation des en-têtes HTTP
+# on regroupe tous les fichiers .headers dans un seul fichier headers.txt
+echo "> compiling HTTP response headers from '$TEMP_DIR' to '$DOWNLOAD_DIR'…"
+headers_output="$DOWNLOAD_DIR/headers.txt"
+# cree un fichier vide
+> "$headers_output"
+
+for header_file in "$TEMP_DIR"/*.headers; do
+  # verifie que le fichier existe
+  if [ ! -e "$header_file" ]; then
+    continue
+  fi
+
+  # recupere le nom du fichier
+  header_name=$(basename "$header_file")
+  # ajoute un séparateur
+  echo "### $header_name:" >> "$headers_output"
+  # ajoute le contenu
+  cat "$header_file" >> "$headers_output"
+  # ajoute une ligne vide
+  echo "" >> "$headers_output"
+done
+
+printf "  %sdone%s\n" "$GREEN" "$RESET"
+
+# création de l'archive compressée
+# on compresse tout le dossier downloads dans une archive .tar.gz
+echo "> compressing all files in '$DOWNLOAD_DIR' to '$ARCHIVE_DIR'…"
+mkdir -p "$ARCHIVE_DIR"
+# nom avec la date
+archive_name="D$(date '+%Y-%m-%dT%H-%M-%S').tar.gz"
+# GZIP=-9 = compression maximale
+GZIP=-9 tar -C "$DOWNLOAD_DIR" -czf "$ARCHIVE_DIR/$archive_name" .
+printf "  %sdone%s (archive file name: %s)\n" "$GREEN" "$RESET" "$archive_name"
+
+# affichage de l'heure de fin
+end_timestamp=$(date '+%Y-%m-%dT%H:%M:%S.%3N%z')
+echo "> bash script ending at: $end_timestamp"
+echo "bye!"
 echo "====================================================================="
+
+# sauvegarde dans l'historique
+echo "$start_timestamp -> $end_timestamp | URLs: $url_count | downloads: $DOWNLOAD_DIR | archive: $ARCHIVE_DIR/$archive_name" >> "$HISTORY_FILE"
